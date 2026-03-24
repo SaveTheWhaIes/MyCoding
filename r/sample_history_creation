@@ -1,0 +1,167 @@
+####################################
+## Sample History Creation        ##
+## Author:      Laurens Hahn      ##
+## Last Update: 21.09.2024        ##
+####################################
+
+# LIBRARIES ---------------------------------------------------------------
+
+library(igraph)
+library(readxl)
+library(tidyverse)
+
+# FUNCTIONS ---------------------------------------------------------------
+
+# Function for creation of patient specific data frame and history plot
+process_patient <- function(patient_id, samples_metadata, samples_dir) {
+  
+  # Extract rows containing patient ID
+  metadata_table <- samples_metadata[grepl(patient_id, samples_metadata$ID), ]
+  
+  # Account for multiple source IDs when samples are pooled
+  metadata_table <- metadata_table %>%
+    separate_rows(Source_ID, sep = "; ")
+  
+  # Create edges data frame (1 Edge = Connection between 2 samples)
+  edges <- metadata_table[ , -c(3:31)]
+  edges <- edges[ , c(2,1)]
+  edges$Source_ID[is.na(edges$Source_ID)] <- patient_id
+  rownames(edges) <- NULL
+  
+  # Create empty data frame for IDs
+  patient_row <- data.frame(ID = patient_id,
+                            Source_ID = NA,
+                            Project_ID = NA,
+                            Lab_Culture_ID = NA,
+                            Additional_IDs = NA)
+  
+  # Create edges data frame (1 Node = 1 Sample)
+  nodes <- metadata_table[ , -c(6:31)]
+  nodes <- rbind(patient_row, nodes)
+  nodes <- nodes %>%
+    distinct(ID, .keep_all = TRUE)
+  
+  # Visual parameters
+  #4 Distribute colors per sample type
+  nodes$color <- ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#1cc7d0",
+                        ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#2dde98",
+                               ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#ffc168",
+                                      ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#ff6c5f",
+                                             ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#ff4f81",
+                                                    ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#b84592",
+                                                           ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#8e43e7",
+                                                                  ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#3369e7",
+                                                                         ifelse(grepl("YOUR_CULTURE_TYPE", nodes$ID), "#00aeff",
+                                                                                "#ffffff")))))))))
+  
+  # Distribute values depending if screen or not
+  nodes$label.dist <- ifelse(grepl("_R", nodes$ID), "0.6", "0")
+  nodes$shape <- ifelse(grepl("_R", nodes$ID), "circle", "rectangle")
+  nodes$label.cex <- ifelse(grepl("_R", nodes$ID), "1.1", "1.6")
+  nodes$size <- ifelse(grepl("_R", nodes$ID), "5", "20")
+  nodes$label <- ifelse(grepl("_R", nodes$ID), sub("^[^_]*_", "", nodes$ID), nodes$ID)
+  nodes <- nodes[ , -2]
+  rownames(nodes) <- NULL
+  
+  # Object creation
+  history <- graph_from_data_frame(edges,
+                                   directed=TRUE,
+                                   vertices=nodes$ID)
+  
+  # Object lacout creation
+  history_layout <- layout_as_tree(history,
+                                   root = 1,
+                                   circular = FALSE,
+                                   mode = "all")
+  
+  # Add visual parameters to object
+  V(history)$color <- as.character(nodes$color)
+  V(history)$label.dist <- as.numeric(nodes$label.dist)
+  V(history)$shape <- as.character(nodes$shape)
+  V(history)$label.cex <- as.numeric(nodes$label.cex)
+  V(history)$size <- as.numeric(nodes$size)
+  V(history)$label <- as.character(nodes$label)
+  V(history)$Project.id <- as.character(nodes$Project_ID)
+  V(history)$lab.culture.id <- as.character(nodes$Lab_Culture_ID)
+  V(history)$add.ids <- as.character(nodes$Additional_IDs)
+  
+  # Plot history object
+  plot.igraph(history,
+              main = paste0("The History of ", patient_id),
+              layout = history_layout,
+              edge.arrow.size = 0.2,
+              edge.color = "#8c919f",
+              vertex.label.color = "black",
+              vertex.label.degree = pi/2,
+              vertex.size2 = 5,
+              margin = -0.1
+  )
+  
+  patient_history <- recordPlot()
+  coordinates <- as.data.frame(history_layout)
+  levels <- max(coordinates$V2)
+  
+  # Patient specific results directory
+  patient_history_file <- paste0(samples_dir, "/YOUR_PATH/", patient_id, "YOUR_PATH_History_Tree.pdf")
+  
+  # Export history plot as PDF
+  dir.create(dirname(patient_history_file), recursive = TRUE, showWarnings = FALSE)
+  
+  pdf(patient_history_file, width = 30, height = 30)
+  replayPlot(patient_history)
+  dev.off()
+}
+
+# PARAMETERS --------------------------------------------------------------
+
+# Set to patient ID of interest or "all" to process all samples
+patient_id <- "all"
+
+
+# DIRECTORIES -------------------------------------------------------------
+
+# Directory which contains all sample folders
+samples_dir <- "YOUR_SAMPLE_DIRECTORY"
+
+# File which contains all the sample metadata
+samples_metadata_path <- "YOUR_METADATA_FILE"
+  
+# SCRIPT ------------------------------------------------------------------
+
+# Load metadata 
+samples_metadata <- readxl::read_excel(
+  samples_metadata_path,
+  col_names = TRUE
+)
+
+# "ALL" patient collection
+# List of files in samples directory
+all_files <- list.files(samples_dir, full.names = TRUE)
+
+# Folder name or patient ID of all files
+basenames <- basename(all_files)
+
+# Check if folder name is in sample metadata
+valid_project_ids <- samples_metadata$Project_ID
+valid_lab_ids <- samples_metadata$Lab_Culture_ID
+valid_files <- all_files[basenames %in% c(valid_project_ids, valid_lab_ids)]
+
+# Run function for all folders if "all" or just selected patient ID
+if (patient_id == "all") {
+  unique_ids <- unique(basename(valid_files))
+  for (id in unique_ids) {
+    tryCatch({
+      process_patient(id, samples_metadata, samples_dir)
+      cat("Processed patient:", id, "\n")
+    }, error = function(e) {
+      cat("Error processing patient:", id, "\n", "Error message:", e$message, "\n")
+    })
+  }
+} else {
+  tryCatch({
+    process_patient(patient_id, samples_metadata, samples_dir)
+    cat("Processed patient:", patient_id, "\n")
+  }, error = function(e) {
+    cat("Error processing patient:", patient_id, "\n", "Error message:", e$message, "\n")
+  })
+}
